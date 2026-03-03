@@ -1,23 +1,15 @@
-FROM alpine:3.6 as build
-
-WORKDIR /src
-
-RUN apk add --no-cache --virtual .build-deps \
-      git make gcc musl-dev linux-headers openssl-dev curl perl
-
-RUN curl -OL https://www.openssl.org/source/old/1.0.2/openssl-1.0.2u.tar.gz \
-    && tar -xzf openssl-1.0.2u.tar.gz \
-    && cd openssl-1.0.2u \
-    && ./config no-shared no-zlib --prefix=/usr/local/openssl-static \
-    && make -j$(nproc) \
-    && make install
-
-COPY . .
-
-RUN make -j$(nproc)
-
 FROM alpine:3.6
 
-COPY --from=build /src/objs/bin/mtproto-proxy /usr/local/bin/mtproto-proxy
+WORKDIR /app
 
-ENTRYPOINT ["/usr/local/bin/mtproto-proxy"]
+RUN apk add --no-cache --virtual .build-deps curl ca-certificates \
+    && curl -L -o mtproto-proxy \
+        https://github.com/mihele95/MTProxy-arm64/releases/download/v1.0.0/mtproto-proxy \
+    && curl -s https://core.telegram.org/getProxySecret -o proxy-secret \
+    && curl -s https://core.telegram.org/getProxyConfig -o proxy-multi.conf \
+    && chmod +x mtproto-proxy \
+    && apk del .build-deps
+
+EXPOSE 443 8888
+
+ENTRYPOINT ["sh", "-c", "SECRET=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \\n'); exec ./mtproto-proxy -u nobody -p 8888 -H 443 -S $SECRET --aes-pwd proxy-secret proxy-multi.conf -M 1"]
