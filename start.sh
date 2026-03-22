@@ -50,12 +50,15 @@ fi
 if [ -n "${MTPROXY_LOCAL_IP:-}" ] && [ -n "${MTPROXY_EXTERNAL_IP:-}" ]; then
   external_ip="$MTPROXY_EXTERNAL_IP"
 
+  # если это не IP — резолвим через nslookup
   if ! echo "$external_ip" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
-    resolved_ip=$(getent hosts "$external_ip" | awk '{print $1}' | head -n1 || true)
+    resolved_ip=$(nslookup "$external_ip" 2>/dev/null | awk '/^Address: / { print $2 }' | tail -n1)
+
     if [ -z "$resolved_ip" ]; then
       echo "Error: failed to resolve domain $external_ip"
       exit 1
     fi
+
     external_ip="$resolved_ip"
   fi
 
