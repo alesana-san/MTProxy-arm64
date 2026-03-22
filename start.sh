@@ -30,8 +30,11 @@ if [ ! -f "proxy-multi.conf" ]; then
   exit 1
 fi
 
+# --- port selection ---
+PORT="${MTPROXY_PORT:-443}"
+
 # --- base command ---
-CMD="./mtproto-proxy -u nobody -p 8888 -H 443 -S ${MTPROXY_SECRET} proxy-multi.conf -M 1 5 --http-stats"
+CMD="./mtproto-proxy -u nobody -p 8888 -H ${PORT} -S ${MTPROXY_SECRET} proxy-multi.conf -M 1 --http-stats"
 
 # --- verbose flag ---
 if [ "${MTPROXY_VERBOSE+x}" = "x" ]; then
@@ -47,7 +50,6 @@ fi
 if [ -n "${MTPROXY_LOCAL_IP:-}" ] && [ -n "${MTPROXY_EXTERNAL_IP:-}" ]; then
   external_ip="$MTPROXY_EXTERNAL_IP"
 
-  # если это не IP — резолвим
   if ! echo "$external_ip" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
     resolved_ip=$(getent hosts "$external_ip" | awk '{print $1}' | head -n1 || true)
     if [ -z "$resolved_ip" ]; then
