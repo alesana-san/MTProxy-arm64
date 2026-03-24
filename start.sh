@@ -2,15 +2,22 @@
 
 set -eu
 
-# --- graceful shutdown ---
 child_pid=""
+timer_pid=""
 
 cleanup() {
   echo "Caught interrupt, stopping..."
-  if [ -n "${child_pid}" ]; then
-    kill "${child_pid}" 2>/dev/null || true
-    wait "${child_pid}" 2>/dev/null || true
+
+  if [ -n "$timer_pid" ]; then
+    kill "$timer_pid" 2>/dev/null || true
+    wait "$timer_pid" 2>/dev/null || true
   fi
+
+  if [ -n "$child_pid" ]; then
+    kill "$child_pid" 2>/dev/null || true
+    wait "$child_pid" 2>/dev/null || true
+  fi
+
   exit 0
 }
 
@@ -30,27 +37,26 @@ if [ ! -f "proxy-multi.conf" ]; then
   exit 1
 fi
 
-# --- port selection ---
 PORT="${MTPROXY_PORT:-443}"
 
-# --- base command ---
-CMD="./mtproto-proxy -u nobody -p 8888 -H ${PORT} -S ${MTPROXY_SECRET} proxy-multi.conf -M 1 --http-stats"
+# --- build command as args (без sh -c!) ---
+CMD_ARGS="
+-u nobody
+-p 8888
+-H ${PORT}
+-S ${MTPROXY_SECRET}
+proxy-multi.conf
+-M 1
+--http-stats
+"
 
-# --- verbose flag ---
-if [ "${MTPROXY_VERBOSE+x}" = "x" ]; then
-  CMD="$CMD -v"
-fi
-
-# --- MTPROXY_TAG ---
-if [ -n "${MTPROXY_TAG:-}" ]; then
-  CMD="$CMD -P ${MTPROXY_TAG}"
-fi
+[ "${MTPROXY_VERBOSE+x}" = "x" ] && CMD_ARGS="$CMD_ARGS -v"
+[ -n "${MTPROXY_TAG:-}" ] && CMD_ARGS="$CMD_ARGS -P ${MTPROXY_TAG}"
 
 # --- NAT INFO ---
 if [ -n "${MTPROXY_LOCAL_IP:-}" ] && [ -n "${MTPROXY_EXTERNAL_IP:-}" ]; then
   external_ip="$MTPROXY_EXTERNAL_IP"
 
-  # если это не IP — резолвим через nslookup
   if ! echo "$external_ip" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
     resolved_ip=$(nslookup "$external_ip" 2>/dev/null | awk '/^Address: / { print $2 }' | tail -n1)
 
@@ -62,7 +68,7 @@ if [ -n "${MTPROXY_LOCAL_IP:-}" ] && [ -n "${MTPROXY_EXTERNAL_IP:-}" ]; then
     external_ip="$resolved_ip"
   fi
 
-  CMD="$CMD --nat-info ${MTPROXY_LOCAL_IP}:${external_ip}"
+  CMD_ARGS="$CMD_ARGS --nat-info ${MTPROXY_LOCAL_IP}:${external_ip}"
 fi
 
 # --- AES PASSWORD ---
@@ -71,30 +77,34 @@ if [ -n "${MTPROXY_PROXY_SECRET:-}" ]; then
     echo "Error: file ${MTPROXY_PROXY_SECRET} not found"
     exit 1
   fi
-  CMD="$CMD --aes-pwd ${MTPROXY_PROXY_SECRET}"
+  CMD_ARGS="$CMD_ARGS --aes-pwd ${MTPROXY_PROXY_SECRET}"
 else
-  CMD="$CMD --aes-pwd proxy-secret"
+  CMD_ARGS="$CMD_ARGS --aes-pwd proxy-secret"
 fi
 
-echo "Starting mtproto-proxy..."
-echo "Command: $CMD"
+# --- MAIN LOOP ---
+while true; do
+  echo "Starting mtproto-proxy..."
 
-# --- daily restart ---
-(
-  sleep 86400
-  echo "24h passed, stopping proxy..."
-  kill $$ 2>/dev/null || true
-) &
+  # запуск напрямую (важно!)
+  ./mtproto-proxy $CMD_ARGS &
+  child_pid=$!
 
-timer_pid=$!
+  # таймер на 24 часа
+  (
+    sleep 86400
+    echo "24h passed, restarting proxy..."
+    kill "$child_pid" 2>/dev/null || true
+  ) &
+  timer_pid=$!
 
-# --- run proxy ---
-sh -c "$CMD" &
-child_pid=$!
+  # ждём завершения proxy
+  wait "$child_pid" || true
 
-wait "$child_pid" || true
+  # чистим таймер
+  kill "$timer_pid" 2>/dev/null || true
+  wait "$timer_pid" 2>/dev/null || true
 
-kill "$timer_pid" 2>/dev/null || true
-wait "$timer_pid" 2>/dev/null || true
-
-echo "Proxy stopped"
+  echo "Proxy stopped, restarting in 2 seconds..."
+  sleep 2
+done
